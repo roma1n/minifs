@@ -71,7 +71,8 @@ int mkdir(char* name, struct terminal* terminal) {
 }
 
 int change_directory(char* name, struct terminal* terminal) {
-    size_t found_dir = exists(terminal->fs_fd_, terminal->inode_index_, name);
+    size_t inode_index = terminal->inode_index_;
+    size_t found_dir = exists(terminal->fs_fd_, inode_index, name);
     if (found_dir != -1) {
         struct inode inode;
         read_inode(terminal->fs_fd_, &inode, found_dir);
@@ -182,6 +183,58 @@ int cat(char* name, struct terminal* terminal) {
     return 0;
 }
 
+int remove_file_index(size_t file_index, struct terminal* terminal) {
+    struct inode inode;
+    read_inode(terminal->fs_fd_, &inode, file_index);
+
+    // remove recursively if directory
+    if (inode.type_ == 1) { // is directory
+        struct block block;
+        read_block(terminal->fs_fd_, &block, inode.data_blocks_[0]);
+
+        struct directory* directory = (struct directory*)block.data_;
+        for (size_t i = 0; i < directory->file_num_; ++i) {
+            remove_file_index(directory->files_[i], terminal);
+        }
+    }
+
+    // remove link from parent
+    struct inode parent_inode;
+    read_inode(terminal->fs_fd_, &parent_inode, terminal->inode_index_);
+    struct block block;
+    read_block(terminal->fs_fd_, &block, parent_inode.data_blocks_[0]);
+    struct directory* directory = (struct directory*)block.data_;
+    size_t index_in_dir = -1;
+    for (size_t i = 0; i < directory->file_num_; ++i) {
+        if (directory->files_[i] == file_index) {
+            index_in_dir = i;
+        }
+    }
+    if (index_in_dir != -1) {
+        directory->files_[index_in_dir] = directory->files_[directory->file_num_ - 1];
+        --directory->file_num_;
+    }
+    write_block(terminal->fs_fd_, &block, parent_inode.data_blocks_[0]);
+
+    // release data blocks
+    struct super_block sb;
+    read_super_block(terminal->fs_fd_, &sb);
+    inode.next_free_inode_index_ = sb.free_inode_;
+    sb.free_inode_ = file_index;
+    write_super_block(terminal->fs_fd_, &sb);
+    write_inode(terminal->fs_fd_, &inode, file_index);
+    return 0;
+}
+
+int remove_file(char* name, struct terminal* terminal) {
+    size_t found_file = exists(terminal->fs_fd_, terminal->inode_index_, name);
+    if (found_file == -1) {
+        printf("File not found. Use touch to create file.\n");
+        return 0;
+    }
+    return remove_file_index(found_file, terminal);
+}
+
 int process_command(char* cmd, struct terminal* terminal) {
     int split = parse_command(cmd);
     char* arg = cmd + split;
@@ -205,6 +258,9 @@ int process_command(char* cmd, struct terminal* terminal) {
     }
     if (strcmp(cmd, "cat") == 0) {
         return cat(arg, terminal);
+    }
+    if (strcmp(cmd, "rm") == 0) {
+        return remove_file(arg, terminal);
     }
     printf("Command not found.\n");
     return -1;
