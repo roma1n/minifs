@@ -59,5 +59,9 @@ size_t make_file(int fs_fd, char* name);
 size_t make_directory(int fs_fd, char* name, size_t parent_inode_index);
 size_t capture_block(int fs_fd);
 
+size_t release_block(int fs_fd, size_t block_index);
+
+size_t exists(int fs_fd, size_t dir_index, char* name);
+size_t parse_path (int fs_fd, size_t inode_index, char* path);
 
 #endif

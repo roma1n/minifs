@@ -16,68 +16,6 @@ int parse_command(char* cmd) {
     return split;
 }
 
-size_t exists(int fs_fd, size_t dir_index, char* name) {
-    struct inode inode;
-    read_inode(fs_fd, &inode, dir_index);
-    while (inode.type_ == 2) { // find origin
-        read_inode(fs_fd, &inode, inode.origin_);
-    }
-
-    if (inode.type_ != 1) {
-        printf("Not a directory!\n");
-    }
-
-    struct block block;
-    read_block(fs_fd, &block, inode.data_blocks_[0]);
-
-    struct directory* directory = (struct directory*)block.data_;
-
-    size_t found_inode = 0;
-
-    for (int i = 0; i < directory->file_num_; ++i) {
-        struct inode file_inode;
-        read_inode(fs_fd, &file_inode, directory->files_[i]);
-        if (strcmp(file_inode.name_, name) == 0) {
-            found_inode = directory->files_[i];
-            break;
-        }
-        if (i == directory->file_num_ - 1) {
-            printf("No such file or directory.\n");
-            return -1;
-        }
-    }
-    return found_inode;
-}
-
-size_t parse_path (int fs_fd, size_t inode_index, char* path) {
-    struct inode inode;
-    if (path[0] == '/') {
-        read_inode(fs_fd, &inode, 0); // read root
-        path += 1;
-    } else {
-        read_inode(fs_fd, &inode, inode_index);
-    }
-
-    if (strcmp(path, "") == 0) {
-        return 0;
-    }
-
-    char* nxt = path;
-    while (*nxt != '/' && *nxt != '\0') {
-        ++nxt;
-    }
-    char last = (*nxt == '\0');
-    *nxt = '\0';
-
-    size_t found_inode = exists(fs_fd, inode_index, path);
-
-    if (last) {
-        return found_inode;
-    } else {
-        return parse_path(fs_fd, found_inode, nxt + 1);
-    }
-}
-
 int process_ls(struct terminal* terminal, char* arg) {
     size_t inode_index = terminal->inode_index_;
     if (strcmp(arg, "") != 0) { // is argument
@@ -150,6 +88,100 @@ int change_directory(char* name, struct terminal* terminal) {
     return 0;
 }
 
+int touch(char* name, struct terminal* terminal) {
+    size_t inode_index = make_file(terminal->fs_fd_, name);
+
+    struct inode inode;
+
+    read_inode(terminal->fs_fd_, &inode, terminal->inode_index_);
+
+    struct block block;
+    read_block(terminal->fs_fd_, &block, inode.data_blocks_[0]);
+
+    struct directory* directory = (struct directory*)block.data_;
+    directory->files_[directory->file_num_] = inode_index;
+    ++directory->file_num_;
+
+    write_block(terminal->fs_fd_, &block, inode.data_blocks_[0]);
+
+    return 0;
+}
+
+int write_file(char* arg, struct terminal* terminal) {
+    int split = parse_command(arg);
+    char* name = arg;
+    char* content = arg + split;
+
+    size_t found_file = exists(terminal->fs_fd_, terminal->inode_index_, name);
+    if (found_file == -1) {
+        printf("File not found. Use touch to create file.\n");
+        return 0;
+    }
+
+    struct inode inode;
+    read_inode(terminal->fs_fd_, &inode, found_file);
+    while (inode.type_ == 2) { // find origin
+        read_inode(terminal->fs_fd_, &inode, inode.origin_);
+    }
+
+    if (inode.type_ != 0) {
+        printf("Not a writable file (directory or link).\n");
+        return 0;
+    }
+
+    for (size_t i = 0; i < inode.data_blocks_num_; ++i) { // release old data
+        release_block(terminal->fs_fd_, inode.data_blocks_[i]);
+    }
+    inode.data_blocks_num_ = 0;
+
+    char last_writen = 0;
+    while (strlen(content) >= BLOCK_SIZE || last_writen == 0) {
+        size_t block_index = capture_block(terminal->fs_fd_);
+        inode.data_blocks_[inode.data_blocks_num_] = block_index;
+        ++inode.data_blocks_num_;
+        struct block block;
+        if(strlen(content) < BLOCK_SIZE) {
+            memcpy(block.data_, content, strlen(content) + 1);
+            last_writen = 1;
+        } else {
+            memcpy(block.data_, content, BLOCK_SIZE);
+            content += BLOCK_SIZE;
+        }
+        write_block(terminal->fs_fd_, &block, block_index);
+    }
+    write_inode(terminal->fs_fd_, &inode, found_file);
+    return 0;
+}
+
+int cat(char* name, struct terminal* terminal) {
+    size_t found_file = exists(terminal->fs_fd_, terminal->inode_index_, name);
+    if (found_file == -1) {
+        printf("File not found. Use touch to create file.\n");
+        return 0;
+    }
+
+    struct inode inode;
+    read_inode(terminal->fs_fd_, &inode, found_file);
+    while (inode.type_ == 2) { // find origin
+        read_inode(terminal->fs_fd_, &inode, inode.origin_);
+    }
+
+    if (inode.type_ != 0) {
+        printf("Not a readable file (directory or link).\n");
+        return 0;
+    }
+
+    for (size_t i = 0; i < inode.data_blocks_num_; ++i) {
+        struct block block;
+        read_block(terminal->fs_fd_, &block, inode.data_blocks_[i]);
+        printf(block.data_);
+    }
+
+    printf("\n");
+
+    return 0;
+}
+
 int process_command(char* cmd, struct terminal* terminal) {
     int split = parse_command(cmd);
     char* arg = cmd + split;
@@ -164,6 +196,15 @@ int process_command(char* cmd, struct terminal* terminal) {
     }
     if (strcmp(cmd, "cd") == 0) {
         return change_directory(arg, terminal);
+    }
+    if (strcmp(cmd, "touch") == 0) {
+        return touch(arg, terminal);
+    }
+    if (strcmp(cmd, "write") == 0) {
+        return write_file(arg, terminal);
+    }
+    if (strcmp(cmd, "cat") == 0) {
+        return cat(arg, terminal);
     }
     printf("Command not found.\n");
     return -1;

@@ -184,3 +184,79 @@ size_t capture_block(int fs_fd) {
 
     return block_index;
 }
+
+size_t release_block(int fs_fd, size_t block_index) {
+    struct super_block sb;
+    read_super_block(fs_fd, &sb);
+
+    struct block block;
+    read_block(fs_fd, &block, block_index);
+    block.next_free_block_index_ = sb.free_block_;
+    write_block(fs_fd, &block, block_index);
+    sb.free_block_ = block_index;
+    write_super_block(fs_fd, &sb);
+
+    return block_index;
+}
+
+size_t exists(int fs_fd, size_t dir_index, char* name) {
+    struct inode inode;
+    read_inode(fs_fd, &inode, dir_index);
+    while (inode.type_ == 2) { // find origin
+        read_inode(fs_fd, &inode, inode.origin_);
+    }
+
+    if (inode.type_ != 1) {
+        printf("Not a directory!\n");
+    }
+
+    struct block block;
+    read_block(fs_fd, &block, inode.data_blocks_[0]);
+
+    struct directory* directory = (struct directory*)block.data_;
+
+    size_t found_inode = 0;
+
+    for (int i = 0; i < directory->file_num_; ++i) {
+        struct inode file_inode;
+        read_inode(fs_fd, &file_inode, directory->files_[i]);
+        if (strcmp(file_inode.name_, name) == 0) {
+            found_inode = directory->files_[i];
+            break;
+        }
+        if (i == directory->file_num_ - 1) {
+            printf("No such file or directory.\n");
+            return -1;
+        }
+    }
+    return found_inode;
+}
+
+size_t parse_path (int fs_fd, size_t inode_index, char* path) {
+    struct inode inode;
+    if (path[0] == '/') {
+        read_inode(fs_fd, &inode, 0); // read root
+        path += 1;
+    } else {
+        read_inode(fs_fd, &inode, inode_index);
+    }
+
+    if (strcmp(path, "") == 0) {
+        return 0;
+    }
+
+    char* nxt = path;
+    while (*nxt != '/' && *nxt != '\0') {
+        ++nxt;
+    }
+    char last = (*nxt == '\0');
+    *nxt = '\0';
+
+    size_t found_inode = exists(fs_fd, inode_index, path);
+
+    if (last) {
+        return found_inode;
+    } else {
+        return parse_path(fs_fd, found_inode, nxt + 1);
+    }
+}
