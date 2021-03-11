@@ -184,6 +184,10 @@ int cat(char* name, struct terminal* terminal) {
 }
 
 int remove_file_index(size_t file_index, struct terminal* terminal) {
+    if (file_index == 0) {
+        printf("Impossible to delete root");
+        return 0;
+    }
     struct inode inode;
     read_inode(terminal->fs_fd_, &inode, file_index);
 
@@ -227,9 +231,16 @@ int remove_file_index(size_t file_index, struct terminal* terminal) {
 }
 
 int remove_file(char* name, struct terminal* terminal) {
+    if (strcmp(name, ".") == 0) {
+        printf("Impossible to delete link to self.\n");
+        return 0;
+    }
+    if (strcmp(name, "..") == 0) {
+        printf("Impossible to delete link to parent.\n");
+        return 0;
+    }
     size_t found_file = exists(terminal->fs_fd_, terminal->inode_index_, name);
     if (found_file == -1) {
-        printf("File not found. Use touch to create file.\n");
         return 0;
     }
     return remove_file_index(found_file, terminal);
