@@ -235,6 +235,41 @@ int remove_file(char* name, struct terminal* terminal) {
     return remove_file_index(found_file, terminal);
 }
 
+int upload(char* dest, char* host_src, struct terminal* terminal) {
+    char arg[BLOCK_SIZE];
+    size_t len = strlen(dest);
+    memcpy(arg, dest, len);
+    *(arg + len) = ' ';
+
+    int src_fd = open(host_src, O_RDONLY);
+    lseek(src_fd, 0L, SEEK_END);
+    size_t sz = lseek(src_fd, 0, SEEK_CUR);
+    lseek(src_fd, 0L, SEEK_SET);
+    read(src_fd, arg + len + 1, sz);
+    close(src_fd);
+
+    write_file(arg, terminal);
+    return 0;
+}
+
+int download(char* src, char* host_dest, struct terminal* terminal) {
+    int dest_fd = open(host_dest, O_WRONLY | O_CREAT, 0666);
+
+    size_t file_index = exists(terminal->fs_fd_, terminal->inode_index_, src);
+    if (file_index == -1) {
+        return 0;
+    }
+    struct inode inode;
+    read_inode(terminal->fs_fd_, &inode, file_index);
+    for (size_t i = 0; i < inode.data_blocks_num_; ++i) {
+        struct block block;
+        read_block(terminal->fs_fd_, &block, inode.data_blocks_[i]);
+        write(dest_fd, block.data_, strlen(block.data_));
+    }
+    close(dest_fd);
+    return 0;
+}
+
 int process_command(char* cmd, struct terminal* terminal) {
     int split = parse_command(cmd);
     char* arg = cmd + split;
@@ -261,6 +296,18 @@ int process_command(char* cmd, struct terminal* terminal) {
     }
     if (strcmp(cmd, "rm") == 0) {
         return remove_file(arg, terminal);
+    }
+    if (strcmp(cmd, "upload") == 0) {
+        int arg_split = parse_command(arg);
+        char* dest = arg;
+        char* host_src = arg + arg_split;
+        return upload(dest, host_src, terminal);
+    }
+    if (strcmp(cmd, "download") == 0) {
+        int arg_split = parse_command(arg);
+        char* src = arg;
+        char* host_desr = arg + arg_split;
+        return download(src, host_desr, terminal);
     }
     printf("Command not found.\n");
     return -1;
