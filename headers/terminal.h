@@ -2,7 +2,6 @@
 #define MINIFS_TERMINAL_H
 
 
-#include "terminal.h"
 #include "fs.h"
 #include <string.h>
 
@@ -12,7 +11,7 @@ struct terminal {
     size_t inode_index_;
 };
 
-void serve_terminal(struct terminal* terminal);
+void serve_terminal(struct terminal* terminal, FILE* in, FILE* out);
 
 
 #endif

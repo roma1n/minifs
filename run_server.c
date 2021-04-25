@@ -1,11 +1,13 @@
+#include <arpa/inet.h>
 #include <stdio.h>
-# include "fs.h"
-#include "terminal.h"
+#include <stdlib.h>
+#include "fs.h"
+#include "server.h"
 
 
 void check_args(int argc, char **argv) {
-    if (argc != 2) {
-        printf("Expected exactly one argument: fs_name");
+    if (argc != 3) {
+        printf("Expected exactly two argument: fs_name port");
         exit(1);
     }
 }
@@ -15,10 +17,9 @@ int main(int argc, char **argv) {
     char* fs_name = argv[1];
     int fs_fd = open_fs(fs_name);
 
-    struct terminal terminal;
-    terminal.fs_fd_ = fs_fd;
-    terminal.inode_index_ = 0;
-    serve_terminal(&terminal);
+    in_port_t port = htons(strtol(argv[2], NULL, 10));
+
+    run_server(fs_fd, port);
 
     close(fs_fd);
     return 0;

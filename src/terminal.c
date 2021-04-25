@@ -16,12 +16,13 @@ int parse_command(char* cmd) {
     return split;
 }
 
-int process_ls(struct terminal* terminal, char* arg) {
+int process_ls(struct terminal* terminal, char* arg, char* buf) {
     size_t inode_index = terminal->inode_index_;
     if (strcmp(arg, "") != 0) { // is argument
         inode_index = parse_path(terminal->fs_fd_, inode_index, arg);
     }
     if (inode_index == -1) {
+        sprintf(buf + strlen(buf), "\n");
         return 0;
     }
     struct inode inode;
@@ -32,7 +33,8 @@ int process_ls(struct terminal* terminal, char* arg) {
     }
 
     if (inode.type_ != 1) {
-        printf("Not a directory!\n");
+        sprintf(buf + strlen(buf), "Not a directory!\n");
+        return 0;
     }
 
     struct block block;
@@ -44,14 +46,14 @@ int process_ls(struct terminal* terminal, char* arg) {
         size_t file_inode_index = directory->files_[file_num];
         struct inode file_inode;
         read_inode(terminal->fs_fd_, &file_inode, file_inode_index);
-        printf("%s\t", file_inode.name_);
+        sprintf(buf + strlen(buf), "%s\t", file_inode.name_);
     }
-    printf("\n");
+    sprintf(buf + strlen(buf), "\n");
 
     return 0;
 }
 
-int mkdir(char* name, struct terminal* terminal) {
+int mkdir(char* name, struct terminal* terminal, char* buf) {
     size_t inode_index = make_directory(terminal->fs_fd_, name, terminal->inode_index_);
 
     struct inode inode;
@@ -67,10 +69,12 @@ int mkdir(char* name, struct terminal* terminal) {
 
     write_block(terminal->fs_fd_, &block, inode.data_blocks_[0]);
 
+    sprintf(buf + strlen(buf), "\n");
+
     return 0;
 }
 
-int change_directory(char* name, struct terminal* terminal) {
+int change_directory(char* name, struct terminal* terminal, char* buf) {
     size_t inode_index = terminal->inode_index_;
     size_t found_dir = exists(terminal->fs_fd_, inode_index, name);
     if (found_dir != -1) {
@@ -81,15 +85,18 @@ int change_directory(char* name, struct terminal* terminal) {
             read_inode(terminal->fs_fd_, &inode, inode.origin_);
         }
         if (inode.type_ != 1) {
-            printf("Not a directory.\n");
+            sprintf(buf + strlen(buf), "Not a directory.\n");
             return 0;
         }
         terminal->inode_index_ = found_dir;
     }
+
+    sprintf(buf + strlen(buf), "\n");
+
     return 0;
 }
 
-int touch(char* name, struct terminal* terminal) {
+int touch(char* name, struct terminal* terminal, char* buf) {
     size_t inode_index = make_file(terminal->fs_fd_, name);
 
     struct inode inode;
@@ -105,17 +112,19 @@ int touch(char* name, struct terminal* terminal) {
 
     write_block(terminal->fs_fd_, &block, inode.data_blocks_[0]);
 
+    sprintf(buf + strlen(buf), "\n");
+
     return 0;
 }
 
-int write_file(char* arg, struct terminal* terminal) {
+int write_file(char* arg, struct terminal* terminal, char* buf) {
     int split = parse_command(arg);
     char* name = arg;
     char* content = arg + split;
 
     size_t found_file = exists(terminal->fs_fd_, terminal->inode_index_, name);
     if (found_file == -1) {
-        printf("File not found. Use touch to create file.\n");
+        sprintf(buf + strlen(buf), "File not found. Use touch to create file.\n");
         return 0;
     }
 
@@ -126,7 +135,7 @@ int write_file(char* arg, struct terminal* terminal) {
     }
 
     if (inode.type_ != 0) {
-        printf("Not a writable file (directory or link).\n");
+        sprintf(buf + strlen(buf), "Not a writable file (directory or link).\n");
         return 0;
     }
 
@@ -151,13 +160,14 @@ int write_file(char* arg, struct terminal* terminal) {
         write_block(terminal->fs_fd_, &block, block_index);
     }
     write_inode(terminal->fs_fd_, &inode, found_file);
+    sprintf(buf + strlen(buf), "\n");
     return 0;
 }
 
-int cat(char* name, struct terminal* terminal) {
+int cat(char* name, struct terminal* terminal, char* buf) {
     size_t found_file = exists(terminal->fs_fd_, terminal->inode_index_, name);
     if (found_file == -1) {
-        printf("File not found. Use touch to create file.\n");
+        sprintf(buf + strlen(buf), "File not found. Use touch to create file.\n");
         return 0;
     }
 
@@ -168,24 +178,24 @@ int cat(char* name, struct terminal* terminal) {
     }
 
     if (inode.type_ != 0) {
-        printf("Not a readable file (directory or link).\n");
+        sprintf(buf + strlen(buf), "Not a readable file (directory or link).\n");
         return 0;
     }
 
     for (size_t i = 0; i < inode.data_blocks_num_; ++i) {
         struct block block;
         read_block(terminal->fs_fd_, &block, inode.data_blocks_[i]);
-        printf(block.data_);
+        sprintf(buf + strlen(buf), "%s", block.data_);
     }
 
-    printf("\n");
+    sprintf(buf + strlen(buf), "\n");
 
     return 0;
 }
 
-int remove_file_index(size_t file_index, struct terminal* terminal) {
+int remove_file_index(size_t file_index, struct terminal* terminal, char* buf) {
     if (file_index == 0) {
-        printf("Impossible to delete root");
+        sprintf(buf + strlen(buf), "Impossible to delete root.\n");
         return 0;
     }
     struct inode inode;
@@ -198,7 +208,7 @@ int remove_file_index(size_t file_index, struct terminal* terminal) {
 
         struct directory* directory = (struct directory*)block.data_;
         for (size_t i = 0; i < directory->file_num_; ++i) {
-            remove_file_index(directory->files_[i], terminal);
+            remove_file_index(directory->files_[i], terminal, buf);
         }
     }
 
@@ -227,26 +237,30 @@ int remove_file_index(size_t file_index, struct terminal* terminal) {
     sb.free_inode_ = file_index;
     write_super_block(terminal->fs_fd_, &sb);
     write_inode(terminal->fs_fd_, &inode, file_index);
+    if (strlen(buf) == 0) {
+        sprintf(buf + strlen(buf), "\n");
+    }
     return 0;
 }
 
-int remove_file(char* name, struct terminal* terminal) {
+int remove_file(char* name, struct terminal* terminal, char* buf) {
     if (strcmp(name, ".") == 0) {
-        printf("Impossible to delete link to self.\n");
+        sprintf(buf + strlen(buf), "Impossible to delete link to self.\n");
         return 0;
     }
     if (strcmp(name, "..") == 0) {
-        printf("Impossible to delete link to parent.\n");
+        sprintf(buf + strlen(buf), "Impossible to delete link to parent.\n");
         return 0;
     }
     size_t found_file = exists(terminal->fs_fd_, terminal->inode_index_, name);
     if (found_file == -1) {
+        sprintf(buf + strlen(buf), "\n");
         return 0;
     }
-    return remove_file_index(found_file, terminal);
+    return remove_file_index(found_file, terminal, buf);
 }
 
-int upload(char* dest, char* host_src, struct terminal* terminal) {
+int upload(char* dest, char* host_src, struct terminal* terminal, char* buf) {
     char arg[BLOCK_SIZE];
     size_t len = strlen(dest);
     memcpy(arg, dest, len);
@@ -259,11 +273,12 @@ int upload(char* dest, char* host_src, struct terminal* terminal) {
     read(src_fd, arg + len + 1, sz);
     close(src_fd);
 
-    write_file(arg, terminal);
+    write_file(arg, terminal, buf);
+    sprintf(buf + strlen(buf), "\n");
     return 0;
 }
 
-int download(char* src, char* host_dest, struct terminal* terminal) {
+int download(char* src, char* host_dest, struct terminal* terminal, char* buf) {
     int dest_fd = open(host_dest, O_WRONLY | O_CREAT, 0666);
 
     size_t file_index = exists(terminal->fs_fd_, terminal->inode_index_, src);
@@ -278,70 +293,80 @@ int download(char* src, char* host_dest, struct terminal* terminal) {
         write(dest_fd, block.data_, strlen(block.data_));
     }
     close(dest_fd);
+    sprintf(buf + strlen(buf), "\n");
     return 0;
 }
 
-int process_command(char* cmd, struct terminal* terminal) {
+int process_command(char* cmd, struct terminal* terminal, FILE* out) {
+    char* buf = (char*) malloc(4096 * sizeof(char));
+
     int split = parse_command(cmd);
     char* arg = cmd + split;
+    int ret = -1;
     if (strcmp(cmd, "exit") == 0) {
-        return 1;
+        ret = 1;
     }
     if (strcmp(cmd, "ls") == 0) {
-        return process_ls(terminal, arg);
+        ret = process_ls(terminal, arg, buf);
     }
     if (strcmp(cmd, "mkdir") == 0) {
-        return mkdir(arg, terminal);
+        ret = mkdir(arg, terminal, buf);
     }
     if (strcmp(cmd, "cd") == 0) {
-        return change_directory(arg, terminal);
+        ret = change_directory(arg, terminal, buf);
     }
     if (strcmp(cmd, "touch") == 0) {
-        return touch(arg, terminal);
+        ret = touch(arg, terminal, buf);
     }
     if (strcmp(cmd, "write") == 0) {
-        return write_file(arg, terminal);
+        ret = write_file(arg, terminal, buf);
     }
     if (strcmp(cmd, "cat") == 0) {
-        return cat(arg, terminal);
+        ret = cat(arg, terminal, buf);
     }
     if (strcmp(cmd, "rm") == 0) {
-        return remove_file(arg, terminal);
+        ret = remove_file(arg, terminal, buf);
     }
     if (strcmp(cmd, "upload") == 0) {
         int arg_split = parse_command(arg);
         char* dest = arg;
         char* host_src = arg + arg_split;
-        return upload(dest, host_src, terminal);
+        ret = upload(dest, host_src, terminal, buf);
     }
     if (strcmp(cmd, "download") == 0) {
         int arg_split = parse_command(arg);
         char* src = arg;
         char* host_desr = arg + arg_split;
-        return download(src, host_desr, terminal);
+        ret = download(src, host_desr, terminal, buf);
     }
-    printf("Command not found.\n");
-    return -1;
+
+    if (ret == -1) {
+        sprintf(buf + strlen(buf), "Command not found: \"%s\".\n", cmd);
+    }
+    size_t len = strlen(buf);
+    write(fileno(out), buf, strlen(buf));
+
+    return ret;
 }
 
-void serve_terminal(struct terminal* terminal) {
-//    struct super_block sb;
-//    read_super_block(fs_fd_, &sb);
-    printf("Welcome to terminal!\n");
+void serve_terminal(struct terminal* terminal, FILE* in, FILE* out) {
     while (1) {
         struct inode inode;
         read_inode(terminal->fs_fd_, &inode, terminal->inode_index_);
+        char* buf = (char*) malloc(4096 * sizeof(char));
+        sprintf(buf + strlen(buf), "user::%s:: \n", inode.name_);
+        size_t len = strlen(buf);
+        write(fileno(out), buf, strlen(buf));
 
-        printf("user::%s:: ", inode.name_);
-        char cmd[CMD_MAX_LEN];
-        for (int i = 0; i < CMD_MAX_LEN; ++i) {
-            cmd[i] = '\0';
-        }
-        scanf("%[^\n]%*c", cmd);
-        int status = process_command(cmd, terminal);
+        char* cmd = NULL;
+        len = 0;
+        getline(&cmd, &len, in);
+        len = strlen(cmd);
+        cmd[len - 1] = '\0';
+        int status = process_command(cmd, terminal, out);
         if (status == 1) {
             break;
         }
+        free(cmd);
     }
-    printf("Exiting terminal.\n");
 }
